@@ -10,18 +10,35 @@
 #define NUM_ITERATIONS 100
 #define NUM_TRIALS(graph_size) (fmin(100, fmax(3, 50000 / (graph_size))))
 
+void time_graph_size(char* filename);
 void run_pagerank(int num_nodes, int num_edges, uint16_t *src, uint16_t *dest);
 void print_avg_time(struct timespec tick, struct timespec tock, int num_trials);
 
-int main(int argc, char* argv[]) {
+int main() {
+    char* filenames[] = {
+        "10.txt",
+        "30.txt",
+        "100.txt",
+        "300.txt",
+        "1000.txt",
+        "3000.txt",
+        "10000.txt",
+        "30000.txt",
+    };
+    for (int i = 0; i < 8; i++) {
+        time_graph_size(filenames[i]);
+    }
+}
+
+void time_graph_size(char* filename) {
     int num_nodes, num_edges;
-    freopen(argv[1], "r", stdin);
+    freopen(filename, "r", stdin);
     scanf("%d %d", &num_nodes, &num_edges);
     // printf("%d nodes; %d edges\n", num_nodes, num_edges);
 
     uint16_t *src = malloc(num_edges * sizeof(uint16_t));
     uint16_t *dest = malloc(num_edges * sizeof(uint16_t));
-    
+
     for (uint16_t *src_i = src, *dest_i = dest;
          scanf("%hi %hi", src_i, dest_i) != EOF;
          src_i++, dest_i++) {}
@@ -34,6 +51,7 @@ int main(int argc, char* argv[]) {
     }
     clock_gettime(CLOCK_REALTIME, &tock);
     print_avg_time(tick, tock, trials);
+
 }
 
 void run_pagerank(int num_nodes, int num_edges, uint16_t *src, uint16_t *dest) {
@@ -81,7 +99,7 @@ void print_avg_time(struct timespec tick, struct timespec tock, int num_trials) 
         nanosecond_diff += NSEC_IN_SEC;
         second_diff -= 1;
     }
-    printf("%ld.%.9ld\n", second_diff, nanosecond_diff);
+    //printf("%ld.%.9ld\n", second_diff, nanosecond_diff);
     ldiv_t divmod = ldiv(second_diff, num_trials);
     second_diff = divmod.quot;
     nanosecond_diff += divmod.rem * NSEC_IN_SEC;
