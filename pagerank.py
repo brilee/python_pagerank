@@ -111,6 +111,16 @@ def _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts):
 _jax_for_body_simple = jax.jit(_jax_for_body_simple, static_argnums=(0,))
 
 
+def pagerank_sparse_jax(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+    score = np.ones([N], dtype=np.float32) / N
+
+    for _ in range(num_iterations):
+        score = _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts)
+    return score
+
+
 def _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts):
     def _jax_for_body_rolled(unused_i, val):
         score, = val
@@ -125,15 +135,11 @@ def _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_co
 _jax_for_loop = jax.jit(_jax_for_loop, static_argnums=(1,))
 
 
-def pagerank_sparse_jax(N, num_iterations=100, d=0.85):
+def pagerank_sparse_jax_rolled(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
     neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
     score = np.ones([N], dtype=np.float32) / N
 
-    # Simple version
-    # for _ in range(num_iterations):
-    #     score = _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts)
-    # Rolled version
     score = _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts)[0]
     return score
 
