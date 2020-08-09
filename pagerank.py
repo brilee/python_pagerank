@@ -1,76 +1,79 @@
 import collections
-import copy
 import functools
-import resource
-import sys
 import timeit
 from typing import List, Tuple
 
 import numpy as np
-import networkx as nx
+import jax.numpy as jnp
+import jax
 
 
 @functools.lru_cache()
-def make_graph(num_nodes, seed=0):
-    g = nx.scale_free_graph(num_nodes, seed=seed)
-    for i in range(num_nodes):
-        g.add_edge(i, i)
-    return g
+def load_graph(N):
+    """Load graph data created by make_graphs.py"""
+    with open('%s.txt' % N) as f:
+        f.readline()
+        edge_data = []
+        for line in f.readlines():
+            x, y = line.split()
+            edge_data.append((int(x), int(y)))
+    return edge_data
 
 
 @functools.lru_cache()
-def adjacency_list(g) -> List[List[int]]:
-    adjacencies = [[] for _ in range(g.number_of_nodes())]
-    for from_edge, to_edge, unused_edge_data in nx.convert.to_edgelist(g):
-        adjacencies[from_edge].append(to_edge)
+def adjacency_list(N) -> List[List[int]]:
+    edge_data = load_graph(N)
+    adjacencies = [[] for _ in range(N)]
+    for from_node, to_node in edge_data:
+        adjacencies[from_node].append(to_node)
     return adjacencies
 
 
 @functools.lru_cache()
-def adjacency_matrix(g) -> np.ndarray:
-    return nx.adjacency_matrix(g).toarray()
+def adjacency_matrix(N) -> np.ndarray:
+    edge_data = load_graph(N)
+    adj_matrix = np.zeros([N, N], dtype=np.float32)
+    for from_node, to_node in edge_data:
+        adj_matrix[from_node, to_node] += 1
+    return adj_matrix
 
 
 @functools.lru_cache()
-def flat_adjacency_list(g) -> Tuple[np.ndarray, np.ndarray]:
-    from_nodes, to_nodes, _ = zip(*nx.convert.to_edgelist(g))
+def flat_adjacency_list(N) -> Tuple[np.ndarray, np.ndarray]:
+    edge_data = load_graph(N)
+    from_nodes, to_nodes = zip(*edge_data)
     return np.array(from_nodes, dtype=np.int16), np.array(to_nodes, dtype=np.int16)
 
 
-def pagerank_naive(g, num_iterations=100, d=0.85):
-    N = g.number_of_nodes()
-    for node, node_data in g.nodes(data=True):
-        node_data['score'] = 1.0 / N
-        node_data['new_score'] = 0
-    
-    adj_list = adjacency_list(g)
+def pagerank_naive(N, num_iterations=100, d=0.85):
+    node_data = [{'score': 1.0/N, 'new_score': 0} for _ in range(N)]
+    adj_list = adjacency_list(N)
 
     for _ in range(num_iterations):
-        for node, out_nodes in enumerate(adj_list):
-            score_packet = g.nodes[node]['score'] / len(out_nodes)
-            for out_node in out_nodes:
-                g.nodes[out_node]['new_score'] += score_packet
-        for node, node_data in g.nodes(data=True):
-            node_data['score'] = node_data['new_score'] * d + (1 - d) / N
-            node_data['new_score'] = 0
-    return np.array([node_data['score'] for node, node_data in g.nodes(data=True)])
+        for from_id, to_ids in enumerate(adj_list):
+            score_packet = node_data[from_id]['score'] / len(to_ids)
+            for to_id in to_ids:
+                node_data[to_id]['new_score'] += score_packet
+        for data_dict in node_data:
+            data_dict['score'] = data_dict['new_score'] * d + (1 - d) / N
+            data_dict['new_score'] = 0
+    return np.array([data_dict['score'] for data_dict in node_data])
 
 
-def pagerank_dense(g, num_iterations=100, d=0.85):
-    adj_matrix = adjacency_matrix(g)
-    N = g.number_of_nodes()
+def pagerank_dense(N, num_iterations=100, d=0.85):
+    adj_matrix = adjacency_matrix(N)
     transition_matrix = adj_matrix / np.sum(adj_matrix, axis=1, keepdims=True)
-    transition_matrix = (d * transition_matrix + (1 - d) / N).astype(np.float32)
+    transition_matrix = d * transition_matrix + (1 - d) / N
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
         score = score @ transition_matrix
     return score
 
-def pagerank_sparse(g, num_iterations=100, d=0.85):
-    from_nodes, to_nodes = flat_adjacency_list(g)
-    neighbor_counts = np.array([len(l) for l in adjacency_list(g)], dtype=np.int16)
-    N = g.number_of_nodes()
+
+def pagerank_sparse(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
@@ -78,39 +81,75 @@ def pagerank_sparse(g, num_iterations=100, d=0.85):
         score_packets = score[from_nodes]
         score = np.zeros([N], dtype=np.float32)
         np.add.at(score, to_nodes, score_packets)
-        score *= d
-        score += (1 - d) / N
+        score = score * d + (1 - d) / N
+    return score
+
+
+def pagerank_sparse_bincount_trick(N, num_iterations=100, d=0.85):
+    """Sparse implementation using bincount optimization.
+
+    See https://github.com/numpy/numpy/issues/5922
+    """
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+
+    score = np.ones([N], dtype=np.float32) / N
+    for _ in range(num_iterations):
+        score /= neighbor_counts
+        score_packets = score[from_nodes]
+        score = np.bincount(to_nodes, weights=score_packets, minlength=N)
+        score = score * d + (1 - d) / N
+    return score
+    numpy.bincount(i, weights=a, minlength=1000)
+
+def _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts):
+    score /= neighbor_counts
+    score_packets = score[from_nodes]
+    new_score = jax.ops.segment_sum(score_packets, to_nodes, num_segments=N)
+    new_score = new_score * d + (1 - d) / N
+    return new_score
+_jax_for_body_simple = jax.jit(_jax_for_body_simple, static_argnums=(0,))
+
+
+def _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts):
+    def _jax_for_body_rolled(unused_i, val):
+        score, = val
+        score /= neighbor_counts
+        score_packets = score[from_nodes]
+        new_score = jax.ops.segment_sum(score_packets, to_nodes, num_segments=N)
+        new_score = new_score * d + (1 - d) / N
+        return (new_score,)
+    init_val = (score,)
+    return jax.lax.fori_loop(0, num_iterations, _jax_for_body_rolled, init_val)
+
+_jax_for_loop = jax.jit(_jax_for_loop, static_argnums=(1,))
+
+
+def pagerank_sparse_jax(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+    score = np.ones([N], dtype=np.float32) / N
+
+    # Simple version
+    # for _ in range(num_iterations):
+    #     score = _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts)
+    # Rolled version
+    score = _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts)[0]
     return score
 
 
 time_result = collections.namedtuple(
-    'time_result', ['nodes', 'edges', 'algorithm', 'time'])
+    'time_result', ['nodes', 'algorithm', 'time'])
 
 def time_run(graph_size, algorithm, num_trials=10):
-    g = make_graph(graph_size)
-    # Prime the lru_caches so that all algorithms are on even footing
-    adjacency_list(g)
-    adjacency_matrix(g)
-    flat_adjacency_list(g)
-    time = timeit.timeit(lambda: algorithm(g), number=num_trials) / num_trials
-    nodes, edges = g.number_of_nodes(), g.number_of_edges()
-    return time_result(nodes, edges, algorithm.__name__, time)
-
-
-def dump_graphs(graph_sizes):
-    """Generate text files with graph data, for use by pagerank.c"""
-    for graph_size in graph_sizes:
-        print('Generating graph of size %s' % graph_size)
-        g = make_graph(graph_size)
-        with open('%s.txt' % graph_size, 'w') as f:
-            f.write('%s %s\n' % (g.number_of_nodes(), g.number_of_edges()))
-            for node, neighbor_list in enumerate(adjacency_list(g)):
-                for neighbor in neighbor_list:
-                    f.write('%s %s\n' % (node, neighbor))
+    # Prime the lru_caches and jax JIT so that all algorithms are on even footing
+    algorithm(graph_size)
+    time = timeit.timeit(lambda: algorithm(graph_size), number=num_trials) / num_trials
+    return time_result(graph_size, algorithm.__name__, time)
 
 
 def run_all(graph_sizes):
-    algorithms = (pagerank_naive, pagerank_sparse, pagerank_dense)
+    algorithms = (pagerank_sparse_bincount_trick, )#(pagerank_naive, pagerank_sparse, pagerank_dense, pagerank_sparse_jax)
     results = []
     for graph_size in graph_sizes:
         num_trials = min(100, max(3, 50000 // graph_size))
@@ -128,7 +167,7 @@ import altair as alt
 import numpy as np
 import pandas as pd
 time_result = collections.namedtuple(
-    'time_result', ['nodes', 'edges', 'algorithm', 'time'])
+    'time_result', ['nodes', 'algorithm', 'time'])
 data = pd.DataFrame(
 ## DATA GOES HERE
 )
@@ -156,8 +195,4 @@ dashed_lines + data_chart
 
 if __name__ == '__main__':
     graph_sizes = (10, 30, 100, 300, 1000, 3000, 10000, 30000)
-    if len(sys.argv) == 1: 
-        print(pagerank_dense(make_graph(10)))
-#        run_all(graph_sizes)
-    elif sys.argv[1] == 'dump_graphs':
-        dump_graphs(graph_sizes)
+    run_all(graph_sizes)
