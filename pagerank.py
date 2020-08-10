@@ -202,6 +202,7 @@ if __name__ == '__main__':
         pagerank_sparse,
         pagerank_sparse_bincount_trick,
         pagerank_dense,
-        pagerank_sparse_jax
+        pagerank_sparse_jax,
+        pagerank_sparse_jax_rolled,
     )
     run_all(graph_sizes, algorithms)
