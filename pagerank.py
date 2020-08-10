@@ -154,17 +154,13 @@ def time_run(graph_size, algorithm, num_trials=10):
     return time_result(graph_size, algorithm.__name__, time)
 
 
-def run_all(graph_sizes):
-    algorithms = (pagerank_sparse_bincount_trick, )#(pagerank_naive, pagerank_sparse, pagerank_dense, pagerank_sparse_jax)
+def run_all(graph_sizes, algorithms):
     results = []
     for graph_size in graph_sizes:
         num_trials = min(100, max(3, 50000 // graph_size))
         for algo in algorithms:
             result = time_run(graph_size, algo, num_trials=num_trials)
-            print(result)
-            results.append(result)
-    print()
-    print(results)
+            print(result, ',')
     # Copy data into Colab;  execute the following to generate plots.
     # Altair requires installing selenium or node.js to generate SVGs, so just use Colab...
 """
@@ -201,4 +197,11 @@ dashed_lines + data_chart
 
 if __name__ == '__main__':
     graph_sizes = (10, 30, 100, 300, 1000, 3000, 10000, 30000)
-    run_all(graph_sizes)
+    algorithms = (
+        pagerank_naive,
+        pagerank_sparse,
+        pagerank_sparse_bincount_trick,
+        pagerank_dense,
+        pagerank_sparse_jax
+    )
+    run_all(graph_sizes, algorithms)
