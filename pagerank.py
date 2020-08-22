@@ -6,6 +6,7 @@ from typing import List, Tuple
 import numpy as np
 import jax.numpy as jnp
 import jax
+import tensorflow as tf
 
 
 @functools.lru_cache()
@@ -148,6 +149,26 @@ def pagerank_sparse_jax_rolled(N, num_iterations=100, d=0.85):
 
     score = np.ones([N], dtype=np.float32) / N
     score = _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts)[0]
+    # Must cast to np.array to work around JAX's lazy return semantics.
+    return np.array(score)
+
+
+# experimental_compile enables XLA for TF, putting it on even footing with JAX.
+@tf.function(experimental_compile=True)
+def pagerank_sparse_tf(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    # TF won't let me gather using int16 indices?...
+    from_nodes = tf.cast(from_nodes, tf.int32)
+    to_nodes = tf.cast(to_nodes, tf.int32)
+    # TF can't do float32 divisions by int16s
+    neighbor_counts = tf.constant(
+        [len(l) for l in adjacency_list(N)], dtype=tf.float32)
+    score = tf.ones([N], dtype=tf.float32) / N
+    for _ in tf.range(num_iterations):
+        score /= neighbor_counts
+        score_packets = tf.gather(score,from_nodes)
+        score = tf.math.unsorted_segment_sum(score_packets, to_nodes, N)
+        score = score * d + (1 - d) / N
     return score
 
 
