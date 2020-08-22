@@ -6,7 +6,7 @@
 #include <time.h>
 
 #define D 0.85f
-#define NSEC_IN_SEC 1000000000
+#define NANOSEC_IN_SEC 1000000000
 #define NUM_ITERATIONS 100
 #define NUM_TRIALS(graph_size) (fmin(100, fmax(3, 50000 / (graph_size))))
 
@@ -95,14 +95,13 @@ void print_avg_time(struct timespec tick, struct timespec tock, int num_trials) 
     long int second_diff = tock.tv_sec - tick.tv_sec;
     long int nanosecond_diff = tock.tv_nsec - tick.tv_nsec;
     if (nanosecond_diff < 0) {
-                          //123456789
-        nanosecond_diff += NSEC_IN_SEC;
+        nanosecond_diff += NANOSEC_IN_SEC;
         second_diff -= 1;
     }
     //printf("%ld.%.9ld\n", second_diff, nanosecond_diff);
     ldiv_t divmod = ldiv(second_diff, num_trials);
     second_diff = divmod.quot;
-    nanosecond_diff += divmod.rem * NSEC_IN_SEC;
+    nanosecond_diff += divmod.rem * NANOSEC_IN_SEC;
     nanosecond_diff /= num_trials;
     printf("%ld.%.9ld\n", second_diff, nanosecond_diff);
 }

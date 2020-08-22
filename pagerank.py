@@ -42,7 +42,8 @@ def adjacency_matrix(N) -> np.ndarray:
 def flat_adjacency_list(N) -> Tuple[np.ndarray, np.ndarray]:
     edge_data = load_graph(N)
     from_nodes, to_nodes = zip(*edge_data)
-    return np.array(from_nodes, dtype=np.int16), np.array(to_nodes, dtype=np.int16)
+    return (np.array(from_nodes, dtype=np.int16),
+            np.array(to_nodes, dtype=np.int16))
 
 
 def pagerank_naive(N, num_iterations=100, d=0.85):
@@ -60,7 +61,7 @@ def pagerank_naive(N, num_iterations=100, d=0.85):
     return np.array([data_dict['score'] for data_dict in node_data])
 
 
-def pagerank_dense(N, num_iterations=100, d=0.85):
+def pagerank_dense_np(N, num_iterations=100, d=0.85):
     adj_matrix = adjacency_matrix(N)
     transition_matrix = adj_matrix / np.sum(adj_matrix, axis=1, keepdims=True)
     transition_matrix = d * transition_matrix + (1 - d) / N
@@ -71,9 +72,10 @@ def pagerank_dense(N, num_iterations=100, d=0.85):
     return score
 
 
-def pagerank_sparse(N, num_iterations=100, d=0.85):
+def pagerank_sparse_np(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = np.array(
+        [len(l) for l in adjacency_list(N)], dtype=np.int16)
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
@@ -85,13 +87,14 @@ def pagerank_sparse(N, num_iterations=100, d=0.85):
     return score
 
 
-def pagerank_sparse_bincount_trick(N, num_iterations=100, d=0.85):
+def pagerank_sparse_np_bincount(N, num_iterations=100, d=0.85):
     """Sparse implementation using bincount optimization.
 
     See https://github.com/numpy/numpy/issues/5922
     """
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = np.array(
+        [len(l) for l in adjacency_list(N)], dtype=np.int16)
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
@@ -101,6 +104,7 @@ def pagerank_sparse_bincount_trick(N, num_iterations=100, d=0.85):
         score = score * d + (1 - d) / N
     return score
     numpy.bincount(i, weights=a, minlength=1000)
+
 
 def _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts):
     score /= neighbor_counts
@@ -113,12 +117,14 @@ _jax_for_body_simple = jax.jit(_jax_for_body_simple, static_argnums=(0,))
 
 def pagerank_sparse_jax(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
-    score = np.ones([N], dtype=np.float32) / N
+    neighbor_counts = np.array(
+        [len(l) for l in adjacency_list(N)], dtype=np.int16)
 
+    score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
         score = _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts)
-    return score
+    # Must cast to np.array to work around JAX's lazy return semantics.
+    return np.array(score)
 
 
 def _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts):
@@ -137,9 +143,10 @@ _jax_for_loop = jax.jit(_jax_for_loop, static_argnums=(1,))
 
 def pagerank_sparse_jax_rolled(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
-    score = np.ones([N], dtype=np.float32) / N
+    neighbor_counts = np.array(
+        [len(l) for l in adjacency_list(N)], dtype=np.int16)
 
+    score = np.ones([N], dtype=np.float32) / N
     score = _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts)[0]
     return score
 
@@ -148,21 +155,24 @@ time_result = collections.namedtuple(
     'time_result', ['nodes', 'algorithm', 'time'])
 
 def time_run(graph_size, algorithm, num_trials=10):
-    # Prime the lru_caches and jax JIT so that all algorithms are on even footing
+    # Prime the lru_caches and JIT caches so that all algorithms are on even footing
     algorithm(graph_size)
     time = timeit.timeit(lambda: algorithm(graph_size), number=num_trials) / num_trials
     return time_result(graph_size, algorithm.__name__, time)
 
 
-def run_all(graph_sizes, algorithms):
+def run_all(algorithms, graph_sizes):
     results = []
-    for graph_size in graph_sizes:
-        num_trials = min(100, max(3, 50000 // graph_size))
-        for algo in algorithms:
+    for algo in algorithms:
+        print("Benchmarking {}".format(algo))
+        for graph_size in graph_sizes:
+            num_trials = min(100, max(3, 50000 // graph_size))
             result = time_run(graph_size, algo, num_trials=num_trials)
-            print(result, ',')
-    # Copy data into Colab;  execute the following to generate plots.
-    # Altair requires installing selenium or node.js to generate SVGs, so just use Colab...
+            results.append(result)
+    print(',\n'.join(map(repr, results)))
+    # I'm using Altair to plot results, but rendering those plots requires
+    # installing selenium or node.js, so we'll rely on Colab to render...
+    # Copy this code snippet into Colab and execute to generate plots.
 """
 import collections
 import altair as alt
@@ -176,33 +186,41 @@ data = pd.DataFrame(
 endpoints = np.array([10, 30000], dtype=np.float32)
 endpoints3 = np.array([100, 10000], dtype=np.float32)
 overlay_df = pd.concat([
-    pd.DataFrame({'nodes': endpoints, 'time': 0.0001 * endpoints, 'scaling': 'linear'}),
+    pd.DataFrame({'nodes': endpoints, 'time': 0.00001 * endpoints, 'scaling': 'linear'}),
     pd.DataFrame({'nodes': endpoints3, 'time': 0.0000000001 * endpoints3 ** 3, 'scaling': 'cubic'}),
 ])
 dashed_lines = alt.Chart(overlay_df).mark_line().encode(
     x = alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
-    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-4, 1e2))),
+    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
     strokeDash=alt.StrokeDash('scaling', scale=alt.Scale(domain=['linear', 'cubic'], range=[[2, 2], [1, 4]])),
     color=alt.value('black'),
 )
 
-data_chart = alt.Chart(data2).mark_line().encode(
+data_chart = alt.Chart(data).mark_line().encode(
     x=alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
-    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-4, 1e2))),
-    color='algorithm',
+    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
+    color=alt.Color('algorithm', sort=[
+        'pagerank_dense_np',
+        'pagerank_naive',
+        'pagerank_sparse_np',
+        'pagerank_sparse_jax',
+        'pagerank_sparse_np_bincount',
+        'pagerank_sparse_jax_rolled',
+        'pagerank_sparse_tf',
+        'pagerank_sparse_c',
+    ])
 )
-
 dashed_lines + data_chart
 """
 
 if __name__ == '__main__':
     graph_sizes = (10, 30, 100, 300, 1000, 3000, 10000, 30000)
     algorithms = (
+        pagerank_dense_np,
         pagerank_naive,
-        pagerank_sparse,
-        pagerank_sparse_bincount_trick,
-        pagerank_dense,
+        pagerank_sparse_np,
+        pagerank_sparse_np_bincount,
         pagerank_sparse_jax,
         pagerank_sparse_jax_rolled,
     )
-    run_all(graph_sizes, algorithms)
+    run_all(algorithms, graph_sizes)
