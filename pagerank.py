@@ -47,6 +47,11 @@ def flat_adjacency_list(N) -> Tuple[np.ndarray, np.ndarray]:
             np.array(to_nodes, dtype=np.int16))
 
 
+@functools.lru_cache()
+def get_neighbor_count(N):
+    return np.array([len(l) for l in adjacency_list(N)], dtype=np.int16)
+
+
 def pagerank_naive(N, num_iterations=100, d=0.85):
     node_data = [{'score': 1.0/N, 'new_score': 0} for _ in range(N)]
     adj_list = adjacency_list(N)
@@ -75,8 +80,7 @@ def pagerank_dense_np(N, num_iterations=100, d=0.85):
 
 def pagerank_sparse_np(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array(
-        [len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = get_neighbor_count(N)
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
@@ -94,8 +98,7 @@ def pagerank_sparse_np_bincount(N, num_iterations=100, d=0.85):
     See https://github.com/numpy/numpy/issues/5922
     """
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array(
-        [len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = get_neighbor_count(N)
 
     score = np.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
@@ -118,17 +121,17 @@ _jax_for_body_simple = jax.jit(_jax_for_body_simple, static_argnums=(0,))
 
 def pagerank_sparse_jax(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array(
-        [len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = get_neighbor_count(N)
 
-    score = np.ones([N], dtype=np.float32) / N
+    score = jax.numpy.ones([N], dtype=np.float32) / N
     for _ in range(num_iterations):
         score = _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts)
     # Must cast to np.array to work around JAX's lazy return semantics.
     return np.array(score)
 
 
-def _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts):
+def _jax_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts):
+    score = jax.numpy.ones([N], dtype=jax.numpy.float32) / N
     def _jax_for_body_rolled(unused_i, val):
         score, = val
         score /= neighbor_counts
@@ -144,25 +147,21 @@ _jax_for_loop = jax.jit(_jax_for_loop, static_argnums=(1,))
 
 def pagerank_sparse_jax_rolled(N, num_iterations=100, d=0.85):
     from_nodes, to_nodes = flat_adjacency_list(N)
-    neighbor_counts = np.array(
-        [len(l) for l in adjacency_list(N)], dtype=np.int16)
+    neighbor_counts = get_neighbor_count(N)
 
-    score = np.ones([N], dtype=np.float32) / N
-    score = _jax_for_loop(num_iterations, N, d, score, from_nodes, to_nodes, neighbor_counts)[0]
+    score = _jax_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts)[0]
     # Must cast to np.array to work around JAX's lazy return semantics.
     return np.array(score)
 
 
 # experimental_compile enables XLA for TF, putting it on even footing with JAX.
 @tf.function(experimental_compile=True)
-def pagerank_sparse_tf(N, num_iterations=100, d=0.85):
-    from_nodes, to_nodes = flat_adjacency_list(N)
+def _tf_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts):
     # TF won't let me gather using int16 indices?...
     from_nodes = tf.cast(from_nodes, tf.int32)
     to_nodes = tf.cast(to_nodes, tf.int32)
-    # TF can't do float32 divisions by int16s
-    neighbor_counts = tf.constant(
-        [len(l) for l in adjacency_list(N)], dtype=tf.float32)
+    # TF can't do float32 divisions by int16s?
+    neighbor_counts = tf.cast(neighbor_counts, tf.float32)
     score = tf.ones([N], dtype=tf.float32) / N
     for _ in tf.range(num_iterations):
         score /= neighbor_counts
@@ -170,6 +169,13 @@ def pagerank_sparse_tf(N, num_iterations=100, d=0.85):
         score = tf.math.unsorted_segment_sum(score_packets, to_nodes, N)
         score = score * d + (1 - d) / N
     return score
+
+def pagerank_sparse_tf(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = get_neighbor_count(N)
+
+    score = _tf_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts)
+    return np.array(score)
 
 
 time_result = collections.namedtuple(
@@ -234,14 +240,36 @@ data_chart = alt.Chart(data).mark_line().encode(
 dashed_lines + data_chart
 """
 
+"""
+normalized_to_c = data.copy()
+c_times = normalized_to_c[normalized_to_c['algorithm'] == 'pagerank_sparse_c']
+for num_nodes, c_time in c_times[['nodes', 'time']].itertuples(index=False):
+  normalized_to_c.loc[normalized_to_c.nodes == num_nodes, 'time'] /= c_time
+normalized_to_c.rename(columns={'time': 'times_slower_than_C'}, inplace=True)
+alt.Chart(normalized_to_c).mark_line().encode(
+    x=alt.X('nodes', scale=alt.Scale(type='log')),
+    y=alt.Y('times_slower_than_C', scale=alt.Scale(type='log')),
+    color=alt.Color('algorithm', sort=[
+        'pagerank_dense_np',
+        'pagerank_sparse_py',
+        'pagerank_sparse_jax',
+        'pagerank_sparse_np_bincount',
+        'pagerank_sparse_jax_rolled',
+        'pagerank_sparse_tf',
+        'pagerank_sparse_c',
+    ])
+)
+"""
+
 if __name__ == '__main__':
     graph_sizes = (10, 30, 100, 300, 1000, 3000, 10000, 30000)
     algorithms = (
         pagerank_dense_np,
         pagerank_naive,
-        pagerank_sparse_np,
+#        pagerank_sparse_np,
         pagerank_sparse_np_bincount,
-        pagerank_sparse_jax,
+#        pagerank_sparse_jax,
         pagerank_sparse_jax_rolled,
+        pagerank_sparse_tf,
     )
     run_all(algorithms, graph_sizes)
