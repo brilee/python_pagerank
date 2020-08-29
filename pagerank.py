@@ -3,6 +3,7 @@ import functools
 import timeit
 from typing import List, Tuple
 
+import numba
 import numpy as np
 import jax.numpy as jnp
 import jax
@@ -108,6 +109,27 @@ def pagerank_sparse_np_bincount(N, num_iterations=100, d=0.85):
         score = score * d + (1 - d) / N
     return score
     numpy.bincount(i, weights=a, minlength=1000)
+
+
+@numba.jit(nopython=True)
+def _numba_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts):
+    score = np.ones(N, dtype=np.float32) / N
+    for _ in range(num_iterations):
+        score /= neighbor_counts
+        new_score = np.zeros_like(score)
+        for i in range(from_nodes.shape[0]):
+            new_score[to_nodes[i]] += score[from_nodes[i]]
+        score = new_score
+        score = score * d + (np.float32(1) - d) / np.float32(N)
+    return score
+
+
+def pagerank_sparse_numba(N, num_iterations=100, d=0.85):
+    from_nodes, to_nodes = flat_adjacency_list(N)
+    neighbor_counts = get_neighbor_count(N)
+    # Numba assumes float literals are float64, causing typecasting havoc.
+    d = np.float32(d)
+    return _numba_for_loop(num_iterations, N, d, from_nodes, to_nodes, neighbor_counts)
 
 
 def _jax_for_body_simple(N, d, score, from_nodes, to_nodes, neighbor_counts):
