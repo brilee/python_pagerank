@@ -4,3 +4,4 @@ numpy==1.19.1
 scipy==1.5.2
 jax<0.2
 jaxlib<0.2
+numba==0.51.1

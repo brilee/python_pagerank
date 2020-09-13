@@ -238,28 +238,43 @@ overlay_df = pd.concat([
     pd.DataFrame({'nodes': endpoints, 'time': 0.00001 * endpoints, 'scaling': 'linear'}),
     pd.DataFrame({'nodes': endpoints3, 'time': 0.0000000001 * endpoints3 ** 3, 'scaling': 'cubic'}),
 ])
-dashed_lines = alt.Chart(overlay_df).mark_line().encode(
-    x = alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
-    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
-    strokeDash=alt.StrokeDash('scaling', scale=alt.Scale(domain=['linear', 'cubic'], range=[[2, 2], [1, 4]])),
-    color=alt.value('black'),
-)
+def chart_algorithms(algos):
+  subdf = data[data.algorithm.isin(algos)]
+  dashed_lines = alt.Chart(overlay_df).mark_line().encode(
+      x = alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
+      y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
+      strokeDash=alt.StrokeDash('scaling', scale=alt.Scale(domain=['linear', 'cubic'], range=[[2, 2], [1, 4]])),
+      color=alt.value('black'),
+  )
 
-data_chart = alt.Chart(data).mark_line().encode(
-    x=alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
-    y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
-    color=alt.Color('algorithm', sort=[
-        'pagerank_dense_np',
-        'pagerank_naive',
-        'pagerank_sparse_np',
-        'pagerank_sparse_jax',
-        'pagerank_sparse_np_bincount',
-        'pagerank_sparse_jax_rolled',
-        'pagerank_sparse_tf',
-        'pagerank_sparse_c',
-    ])
-)
-dashed_lines + data_chart
+  data_chart = alt.Chart(subdf).mark_line().encode(
+      x=alt.X('nodes', scale=alt.Scale(type='log', domain=(10, 30000))),
+      y=alt.Y('time', scale=alt.Scale(type='log', domain=(1e-5, 1e2))),
+      color=alt.Color('algorithm', sort=[
+          'pagerank_dense_np',
+          'pagerank_naive',
+          'pagerank_sparse_np',
+          'pagerank_sparse_jax',
+          'pagerank_sparse_np_bincount',
+          'pagerank_sparse_jax_rolled',
+          'pagerank_sparse_tf',
+          'pagerank_sparse_numba',
+          'pagerank_sparse_c',
+      ])
+  )
+  return dashed_lines + data_chart
+"""
+
+"""
+chart_algorithms([
+    'pagerank_dense_np',
+    'pagerank_naive',
+    'pagerank_sparse_np_bincount',
+    'pagerank_sparse_c',
+    'pagerank_sparse_tf',
+    'pagerank_sparse_jax_rolled',
+    'pagerank_sparse_numba',
+])
 """
 
 """
@@ -286,6 +301,7 @@ alt.Chart(normalized_to_c).mark_line().encode(
 if __name__ == '__main__':
     graph_sizes = (10, 30, 100, 300, 1000, 3000, 10000, 30000)
     algorithms = (
+        pagerank_sparse_numba,
         pagerank_dense_np,
         pagerank_naive,
 #        pagerank_sparse_np,
